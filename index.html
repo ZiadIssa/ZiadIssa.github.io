@@ -1036,9 +1036,17 @@ footer.foot .wrap{display:block}
 .q-card figcaption{margin-top:auto}
 .q-card::before{font-family:Georgia,"Times New Roman",serif;font-size:72px;height:30px}
 
+.wiz-fail{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 16px;border-radius:16px;background:#FFF2F2;box-shadow:inset 0 0 0 1px rgba(215,0,21,.18)}
+.wiz-fail[hidden]{display:none}
+.wiz-fail b{display:block;font-size:14.5px;color:#B0000F}.wiz-fail span{font-size:13.5px;color:var(--ink-2)}
+.wiz-fail.pop{animation:pbIn .5s cubic-bezier(.2,.8,.2,1)}
+.wiz:has(.wiz-fail:not([hidden])) .wiz-alt{display:flex}
+
+.wiz-back::after{content:none}
+
 .contact.mini{padding:clamp(64px,8vw,100px) 0}
 </style>
-</head>
+<script>window.DD_EMAILJS={"service": "", "template": "", "key": ""}</script></head>
 <body>
 
 <nav class="nav" id="nav" aria-label="Main">
@@ -1839,6 +1847,7 @@ footer.foot .wrap{display:block}
               <ol class="next"><li><b>1</b><div><h4>I read it</h4><p>Every enquiry is read by me, not a bot.</p></div></li><li><b>2</b><div><h4>A short call</h4><p>Fifteen minutes to understand what you need.</p></div></li><li><b>3</b><div><h4>A fixed quote</h4><p>What I'd build, how long it takes and the price, in writing.</p></div></li></ol>
             </div>
           </div>
+          <div class="wiz-fail" id="wiz-fail" hidden role="alert"><div><b>Your enquiry didn't go through.</b><span>The sending service didn't answer. Nothing you typed is lost.</span></div><div class="wf-acts"><button type="button" class="pill sm" data-act="retry">Try again</button></div></div>
           <div class="wiz-alt" id="wiz-alt"><span>Prefer your own email?</span><button type="button" class="more" data-act="mail">Open my email app</button><button type="button" class="more" data-act="copy">Copy the details</button></div>
           <div class="wiz-nav"><button type="button" class="more wiz-back" id="wiz-back">Back</button><span class="wiz-err" id="wiz-err" aria-live="polite"></span><button type="button" class="pill" id="wiz-next">Continue</button></div>
         </form>
@@ -2425,21 +2434,38 @@ document.querySelectorAll('.svc').forEach(c => c.addEventListener('pointermove',
   const subject = () => `New enquiry${input('business') ? ': ' + input('business') : ''} (${LANG.toUpperCase()})`;
   const plain = d => Object.entries(d).map(([k,v]) => `${k.replace(/_/g,' ')}: ${v}`).join('\n');
   const mailHref = () => `mailto:zeyadissa333@gmail.com?subject=${encodeURIComponent(subject())}&body=${encodeURIComponent('Hi Zeyad,\n\n' + plain(collect()))}`;
-  // send through FormSubmit as a normal form post: this is what makes the automatic reply email work
-  function send(){
+  // EmailJS (sends from your Gmail, with an automatic reply). Fill these in to switch it on.
+  const EJS = window.DD_EMAILJS || { service: '', template: '', key: '' };
+  const fail = document.getElementById('wiz-fail');
+  async function send(){
     if (input('_honey')) return;
-    const d = collect(), first = d.name.split(' ')[0];
-    const next = location.origin + location.pathname + '?sent=1&n=' + encodeURIComponent(first) + '#start';
-    const f = document.createElement('form'); f.method = 'POST'; f.action = 'https://formsubmit.co/zeyadissa333@gmail.com'; f.style.display = 'none';
-    const add = (k, v) => { const i = document.createElement('input'); i.type = 'hidden'; i.name = k; i.value = v; f.appendChild(i); };
-    add('_subject', subject()); add('_template', 'table'); add('_next', next); add('_replyto', d.email);
-    add('_autoresponse', t('auto', "Thanks for getting in touch with Done Different. I've got your enquiry and I'll read it myself. Expect a reply soon with a few questions and a time for a short call. Zeyad Issa"));
-    Object.entries(d).forEach(([k,v]) => add(k, v));
+    const d = collect();
     try { sessionStorage.setItem('dd-enq', JSON.stringify({ subject: subject(), body: plain(d), sum: [...document.querySelectorAll('#sum dd')].map(x => x.textContent), est: document.getElementById('est').textContent })); } catch(e){}
-    wiz.classList.add('sending'); next_btn_text();
-    document.body.appendChild(f); f.submit();
+    wiz.classList.add('sending'); next.textContent = t('sending','Sending…'); if (fail) fail.hidden = true;
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 15000);
+    try {
+      let ok = false;
+      if (EJS.service && EJS.template && EJS.key){
+        const r = await fetch('https://api.emailjs.com/api/v1.0/email/send', { method:'POST', signal: ctl.signal, headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ service_id: EJS.service, template_id: EJS.template, user_id: EJS.key, template_params: Object.assign({}, d, {
+            title: subject(), summary: plain(d),
+            auto_subject: t('autosub', 'We got your enquiry, {n}').replace('{n}', d.name.split(' ')[0]),
+            auto_message: t('auto', "Thanks for getting in touch with Done Different. I've got your enquiry and I'll read it myself. Expect a reply soon with a few questions and a time for a short call. Zeyad Issa") }) }) });
+        ok = r.ok;
+      } else {
+        const r = await fetch('https://formsubmit.co/ajax/zeyadissa333@gmail.com', { method:'POST', signal: ctl.signal, headers:{'Content-Type':'application/json', Accept:'application/json'},
+          body: JSON.stringify(Object.assign({ _subject: subject(), _template: 'table', _replyto: d.email }, d)) });
+        const jj = await r.json().catch(() => ({})); ok = r.ok && String(jj.success) !== 'false';
+      }
+      clearTimeout(timer);
+      if (!ok) throw new Error('send');
+      wiz.classList.remove('sending'); finish(d.name.split(' ')[0], !!(EJS.service && EJS.template && EJS.key));
+    } catch (e) {
+      clearTimeout(timer); wiz.classList.remove('sending'); next.textContent = t('send','Send enquiry');
+      if (fail){ fail.hidden = false; fail.classList.remove('pop'); void fail.offsetWidth; fail.classList.add('pop'); }
+    }
   }
-  function next_btn_text(){ next.textContent = t('sending','Sending…'); }
+  if (fail) fail.querySelector('[data-act="retry"]').addEventListener('click', () => send());
   // email fallback: open the mail app again, or copy everything
   const alt = document.getElementById('wiz-alt');
   if (alt){
@@ -2451,10 +2477,10 @@ document.querySelectorAll('.svc').forEach(c => c.addEventListener('pointermove',
       catch(err){ e.currentTarget.textContent = 'zeyadissa333@gmail.com'; }
     });
   }
-  function finish(name){
+  function finish(name, replied){
     wiz.classList.add('finished');
     document.getElementById('done-title').textContent = t('thanks','Thanks, {n}. Your enquiry is in.').replace('{n}', name || '').replace(/^(\S+), \./,'$1.').replace(' ,', ',');
-    document.getElementById('done-sub').textContent = t('copy','A confirmation is on its way to your inbox.');
+    document.getElementById('done-sub').textContent = replied === false ? t('noreply','I\'ll get back to you at the email you gave me.') : t('copy','A confirmation is on its way to your inbox.');
     show(5, 1);
   }
   // coming back from FormSubmit
